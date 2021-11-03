@@ -35,7 +35,6 @@ EVAL_BLEU_ORDER = 4
 
 logger = logging.getLogger(__name__)
 
-
 def load_langpair_dataset(
     data_path,
     split,
@@ -314,8 +313,8 @@ class TranslationTask(FairseqTask):
         assert src_dict.pad() == tgt_dict.pad()
         assert src_dict.eos() == tgt_dict.eos()
         assert src_dict.unk() == tgt_dict.unk()
-        logger.info("[{}] dictionary: {} types".format(cfg.source_lang, len(src_dict)))
-        logger.info("[{}] dictionary: {} types".format(cfg.target_lang, len(tgt_dict)))
+        #logger.info("[{}] dictionary: {} types".format(cfg.source_lang, len(src_dict)))
+        #logger.info("[{}] dictionary: {} types".format(cfg.target_lang, len(tgt_dict)))
 
         return cls(cfg, src_dict, tgt_dict)
 

@@ -747,7 +747,7 @@ class FairseqBMUFConfig(FairseqDataclass):
 @dataclass
 class GenerationConfig(FairseqDataclass):
     beam: int = field(
-        default=5, metadata={"help": "beam size"},
+        default=1, metadata={"help": "beam size"},
     )
     nbest: int = field(
         default=1, metadata={"help": "number of hypotheses to output"},

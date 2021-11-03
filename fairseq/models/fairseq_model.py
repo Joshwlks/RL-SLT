@@ -316,6 +316,7 @@ class FairseqEncoderDecoderModel(BaseFairseqModel):
                 - the decoder's output of shape `(batch, tgt_len, vocab)`
                 - a dictionary with any model-specific outputs
         """
+        
         encoder_out = self.encoder(src_tokens, src_lengths=src_lengths, **kwargs)
         decoder_out = self.decoder(
             prev_output_tokens, encoder_out=encoder_out, **kwargs

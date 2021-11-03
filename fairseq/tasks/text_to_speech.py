@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 try:
     from tensorboardX import SummaryWriter
 except ImportError:
-    logger.info("Please install tensorboardX: pip install tensorboardX")
+    #logger.info("Please install tensorboardX: pip install tensorboardX")
     SummaryWriter = None
 
 

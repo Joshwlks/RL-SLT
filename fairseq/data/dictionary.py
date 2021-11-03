@@ -113,6 +113,10 @@ class Dictionary:
             if utils.item(i) not in extra_symbols_to_ignore
         )
 
+        #print(self.symbols[1])
+        #print(self.symbols)
+        
+
         return data_utils.post_process(sent, bpe_symbol)
 
     def unk_string(self, escape=False):
@@ -311,21 +315,28 @@ class Dictionary:
         reverse_order=False,
     ) -> torch.IntTensor:
         words = line_tokenizer(line)
+        #print(f"the words: {words}")
         if reverse_order:
             words = list(reversed(words))
         nwords = len(words)
+        #print(f"the nwords: {nwords}")
         ids = torch.IntTensor(nwords + 1 if append_eos else nwords)
+        #print(f"the ids: {ids}")
 
         for i, word in enumerate(words):
             if add_if_not_exist:
+                # This deals with unkown words (e.g. <unk>) by adding them to the src dict
                 idx = self.add_symbol(word)
             else:
+                # This is just getting the index of the word from the dictionary 
                 idx = self.index(word)
+                #print(f"the idx: {idx}")
             if consumer is not None:
                 consumer(word, idx)
             ids[i] = idx
         if append_eos:
             ids[nwords] = self.eos_index
+        #print(f"the ids afterwards: {ids}")
         return ids
 
     @staticmethod

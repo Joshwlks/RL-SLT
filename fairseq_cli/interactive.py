@@ -24,6 +24,8 @@ from fairseq.dataclass.configs import FairseqConfig
 from fairseq.dataclass.utils import convert_namespace_to_omegaconf
 from fairseq.token_generation_constraints import pack_constraints, unpack_constraints
 from fairseq_cli.generate import get_symbols_to_strip_from_output
+import warnings
+warnings.filterwarnings('ignore', '.*floor_divide is deprecated.*',)
 
 
 logging.basicConfig(
@@ -41,7 +43,8 @@ Translation = namedtuple("Translation", "src_str hypos pos_scores alignments")
 
 def buffered_read(input, buffer_size):
     buffer = []
-    with fileinput.input(files=[input], openhook=fileinput.hook_encoded("utf-8")) as h:
+    #here the input for interactive is read, the fileinput is a python class. The input method takes a file or if passed '-' will read from sys.stin
+    with fileinput.input(files=[input], openhook=fileinput.hook_encoded("utf-8")) as h: 
         for src_str in h:
             buffer.append(src_str.strip())
             if len(buffer) >= buffer_size:
@@ -51,8 +54,9 @@ def buffered_read(input, buffer_size):
     if len(buffer) > 0:
         yield buffer
 
-
-def make_batches(lines, cfg, task, max_positions, encode_fn):
+# This function is converting the input sentence pieces into the vectors etc
+def make_batches(lines, cfg, task, max_positions, encode_fn): #(inputs, cfg, task, max_positions, encode_fn)
+    #print(f"###MAKE BATCHES###")
     def encode_fn_target(x):
         return encode_fn(x)
 
@@ -60,9 +64,13 @@ def make_batches(lines, cfg, task, max_positions, encode_fn):
         # Strip (tab-delimited) contraints, if present, from input lines,
         # store them in batch_constraints
         batch_constraints = [list() for _ in lines]
+        #print(f"the batch constraints: {batch_constraints}")
         for i, line in enumerate(lines):
             if "\t" in line:
                 lines[i], *batch_constraints[i] = line.split("\t")
+                #print(f"lines[i] = {lines[i]}\n *batch_constraints[i] = {batch_constraints[i]}")
+        
+        #print(f"updated batch constraints: {batch_constraints}")
 
         # Convert each List[str] to List[Tensor]
         for i, constraint_list in enumerate(batch_constraints):
@@ -80,6 +88,7 @@ def make_batches(lines, cfg, task, max_positions, encode_fn):
     else:
         constraints_tensor = None
 
+    # Here we are getting the tokens and token lengths from the inputs 
     tokens, lengths = task.get_interactive_tokens_and_lengths(lines, encode_fn)
 
     itr = task.get_batch_iterator(
@@ -127,7 +136,7 @@ def main(cfg: FairseqConfig):
         or cfg.dataset.batch_size <= cfg.interactive.buffer_size
     ), "--batch-size cannot be larger than --buffer-size"
 
-    logger.info(cfg)
+    #logger.info(cfg) # don't want this as it causes a mess to appear on the cmd line
 
     # Fix seed for stochastic decoding
     if cfg.common.seed is not None and not cfg.generation.no_seed_provided:
@@ -141,7 +150,7 @@ def main(cfg: FairseqConfig):
 
     # Load ensemble
     overrides = ast.literal_eval(cfg.common_eval.model_overrides)
-    logger.info("loading model(s) from {}".format(cfg.common_eval.path))
+    #logger.info("loading model(s) from {}".format(cfg.common_eval.path))
     models, _model_args = checkpoint_utils.load_model_ensemble(
         utils.split_paths(cfg.common_eval.path),
         arg_overrides=overrides,
@@ -199,36 +208,47 @@ def main(cfg: FairseqConfig):
             "NOTE: Constrained decoding currently assumes a shared subword vocabulary."
         )
 
-    if cfg.interactive.buffer_size > 1:
-        logger.info("Sentence buffer size: %s", cfg.interactive.buffer_size)
-    logger.info("NOTE: hypothesis and token scores are output in base 2")
-    logger.info("Type the input sentence and press return:")
+    #if cfg.interactive.buffer_size > 1:
+        #logger.info("Sentence buffer size: %s", cfg.interactive.buffer_size)
+    #logger.info("NOTE: hypothesis and token scores are output in base 2")
+    #logger.info("Type the input sentence and press return:")
     start_id = 0
+    print(cfg.interactive.input)
+    
+    print(np.eroror)
     for inputs in buffered_read(cfg.interactive.input, cfg.interactive.buffer_size):
         results = []
+        #print(f"the inputs: {inputs}")
         for batch in make_batches(inputs, cfg, task, max_positions, encode_fn):
+            # here the sentence piece inputs are being converted into vectors (via the make_batches function)
             bsz = batch.src_tokens.size(0)
             src_tokens = batch.src_tokens
             src_lengths = batch.src_lengths
             constraints = batch.constraints
+            #print(f"the scr tokens from the interactive file: {src_tokens}")
+            #print(f"the src_lengths: {src_lengths}")
             if use_cuda:
                 src_tokens = src_tokens.cuda()
                 src_lengths = src_lengths.cuda()
                 if constraints is not None:
                     constraints = constraints.cuda()
 
+            # The inputs 
             sample = {
                 "net_input": {
                     "src_tokens": src_tokens,
                     "src_lengths": src_lengths,
                 },
             }
+            ### The translation starts ###
             translate_start_time = time.time()
             translations = task.inference_step(
                 generator, models, sample, constraints=constraints
             )
             translate_time = time.time() - translate_start_time
             total_translate_time += translate_time
+            ### The translation ends ###
+
             list_constraints = [[] for _ in range(bsz)]
             if cfg.generation.constraints:
                 list_constraints = [unpack_constraints(c) for c in constraints]
@@ -299,11 +319,11 @@ def main(cfg: FairseqConfig):
         # update running id_ counter
         start_id += len(inputs)
 
-    logger.info(
-        "Total time: {:.3f} seconds; translation time: {:.3f}".format(
-            time.time() - start_time, total_translate_time
-        )
-    )
+    #logger.info(
+        #"Total time: {:.3f} seconds; translation time: {:.3f}".format(
+            #time.time() - start_time, total_translate_time
+        #)
+    #)
 
 
 def cli_main():

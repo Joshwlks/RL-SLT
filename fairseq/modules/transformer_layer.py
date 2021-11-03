@@ -315,6 +315,8 @@ class TransformerDecoderLayerBase(nn.Module):
         Returns:
             encoded output of shape `(seq_len, batch, embed_dim)`
         """
+        #print(f"the input being passed into the decoder layer: {x}")
+        #raise NotImplementedError()
         if need_head_weights:
             need_attn = True
 

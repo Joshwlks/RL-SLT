@@ -336,6 +336,7 @@ class FairseqTask(object):
 
         return criterions.build_criterion(cfg, self)
 
+    # Here we build the generator that is used for the transltions (including the interactive translations!)
     def build_generator(
         self, models, args, seq_gen_cls=None, extra_gen_cls_kwargs=None, prefix_allowed_tokens_fn=None,
     ):
@@ -371,6 +372,7 @@ class FairseqTask(object):
                 compute_alignment=getattr(args, "print_alignment", False),
             )
 
+        # Here we are importing the sequence generator that you have been looking at.
         from fairseq.sequence_generator import (
             SequenceGenerator,
             SequenceGeneratorWithAlignment,
@@ -443,6 +445,7 @@ class FairseqTask(object):
                 seq_gen_cls = SequenceGeneratorWithAlignment
                 extra_gen_cls_kwargs["print_alignment"] = args.print_alignment
             else:
+                # At the moment you are coming into here
                 seq_gen_cls = SequenceGenerator
 
         return seq_gen_cls(
@@ -510,12 +513,14 @@ class FairseqTask(object):
     ) -> torch.utils.data.Dataset:
         raise NotImplementedError
 
+    # This gets called in line ~240 in the interactive file and passes onto the _generate fnc in the sequence_generator file
+    # We will need this to take the previous output, and also output the previous one I suppose
     def inference_step(
-        self, generator, models, sample, prefix_tokens=None, constraints=None
+        self, generator, models, sample, prefix_tokens=None, constraints=None, previous_tokens=None, prev_states=None
     ):
         with torch.no_grad():
             return generator.generate(
-                models, sample, prefix_tokens=prefix_tokens, constraints=constraints
+                models, sample, prefix_tokens=prefix_tokens, constraints=constraints, previous_tokens=previous_tokens, prev_states=prev_states
             )
 
     def begin_epoch(self, epoch, model):
@@ -606,6 +611,8 @@ class FairseqTask(object):
         return encoders.build_bpe(args)
 
     def get_interactive_tokens_and_lengths(self, lines, encode_fn):
+        # tokenises the words and then gets their respective numerical representations from the src dict
+        # returns the token ids and their length
         tokens = [
             self.source_dictionary.encode_line(
                 encode_fn(src_str), add_if_not_exist=False

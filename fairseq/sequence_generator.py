@@ -15,6 +15,10 @@ from fairseq.models import FairseqIncrementalDecoder
 from torch import Tensor
 from fairseq.ngram_repeat_block import NGramRepeatBlock
 
+def th_delete(tensor, indices):
+    mask = torch.ones(tensor.numel(), dtype=torch.bool)
+    mask[indices] = False
+    return tensor[mask]
 
 class SequenceGenerator(nn.Module):
     def __init__(
@@ -67,6 +71,10 @@ class SequenceGenerator(nn.Module):
             self.model = models
         else:
             self.model = EnsembleModel(models)
+        # for model in models:
+        #     print(type(model.decoder))
+            
+
         self.tgt_dict = tgt_dict
         self.pad = tgt_dict.pad()
         self.unk = tgt_dict.unk()
@@ -109,12 +117,12 @@ class SequenceGenerator(nn.Module):
         )
 
         self.model.eval()
-
+        
         self.lm_model = lm_model
         self.lm_weight = lm_weight
         if self.lm_model is not None:
             self.lm_model.eval()
-
+        
     def cuda(self):
         self.model.cuda()
         return self
@@ -186,12 +194,17 @@ class SequenceGenerator(nn.Module):
         """
         return self._generate(sample, **kwargs)
 
+    # Everything wrt interactive translation ends up here for translating (line ~240 in the interactive file)
+    # We will need to change this function to do what I want... perhaps I should add some kind of bool flag so that this function can 
+    # still do what is the default for a transformer!!!
     def _generate(
         self,
         sample: Dict[str, Dict[str, Tensor]],
         prefix_tokens: Optional[Tensor] = None,
         constraints: Optional[Tensor] = None,
         bos_token: Optional[int] = None,
+        previous_tokens: Optional[Tensor] = None,
+        prev_states: Optional[tuple] = None,
     ):
         incremental_states = torch.jit.annotate(
             List[Dict[str, Dict[str, Optional[Tensor]]]],
@@ -200,7 +213,14 @@ class SequenceGenerator(nn.Module):
                 for i in range(self.model.models_size)
             ],
         )
+
+        if previous_tokens is not None:
+            print(f"the previous_tokens are here: {previous_tokens}")
+            #raise NotImplementedError()
+        #print(f"the sample: {sample}")
         net_input = sample["net_input"]
+        #print(f"the net_input: {net_input}")
+        
 
         if "src_tokens" in net_input:
             src_tokens = net_input["src_tokens"]
@@ -236,6 +256,7 @@ class SequenceGenerator(nn.Module):
             )
 
         # Initialize constraints, when active
+        # Constrained decoding already implemented?
         self.search.init_constraints(constraints, beam_size)
 
         max_len: int = -1
@@ -246,12 +267,15 @@ class SequenceGenerator(nn.Module):
                 int(self.max_len_a * src_len + self.max_len_b),
                 self.max_len - 1,
             )
+            if previous_tokens is not None:
+                #max_len = 4
+                pass
         assert (
             self.min_len <= max_len
         ), "min_len cannot be larger than max_len, please adjust these!"
         # compute the encoder output for each beam
         with torch.autograd.profiler.record_function("EnsembleModel: forward_encoder"):
-            encoder_outs = self.model.forward_encoder(net_input)
+            encoder_outs = self.model.forward_encoder(net_input) # the encoder, I don't need to edit this atm
 
         # placeholder of indices for bsz * beam_size to hold tokens and accumulative scores
         new_order = torch.arange(bsz).view(-1, 1).repeat(1, beam_size).view(-1)
@@ -270,7 +294,10 @@ class SequenceGenerator(nn.Module):
             .long()
             .fill_(self.pad)
         )  # +2 for eos and pad
+        #print(f"the src_tokens: {src_tokens}")
+        print(f"tokens before: {tokens}")
         tokens[:, 0] = self.eos if bos_token is None else bos_token
+        print(f"tokens after: {tokens}")
         attn: Optional[Tensor] = None
 
         # A list that indicates candidates that should be ignored.
@@ -280,6 +307,10 @@ class SequenceGenerator(nn.Module):
         cands_to_ignore = (
             torch.zeros(bsz, beam_size).to(src_tokens).eq(-1)
         )  # forward and backward-compatible False mask
+
+        print(f"the cands to ignore: {cands_to_ignore}")
+        print(f"the total number of sentences: {bsz}")
+        
 
         # list of completed sentences
         finalized = torch.jit.annotate(
@@ -300,7 +331,7 @@ class SequenceGenerator(nn.Module):
             .unsqueeze(1)
             .type_as(tokens)
             .to(src_tokens.device)
-        )
+        )    
         cand_offsets = torch.arange(0, cand_size).type_as(tokens).to(src_tokens.device)
 
         reorder_state: Optional[Tensor] = None
@@ -312,10 +343,27 @@ class SequenceGenerator(nn.Module):
         else:
             original_batch_idxs = torch.arange(0, bsz).type_as(tokens)
 
+        cand_step = 4
+        print(f"the max length is: {max_len}")
+        ### this is the important part for what you are working on
+        prev_inc_state = None
         for step in range(max_len + 1):  # one extra step for EOS marker
+            if previous_tokens is not None:
+                if previous_tokens[:, step+1:step+2]==1:
+                    tokens = torch.clone(previous_tokens).detach()
+                    incremental_states, reorder_state = prev_states
+                else:
+                    continue
+            else:
+                if tokens[:, step:step+1] == torch.tensor([[4514]], device='cuda:0'):
+                    prev_states = (incremental_states, reorder_state)
+                pass
             # reorder decoder internal states based on the prev choice of beams
+            #reorder_state = torch.tensor([[0]], device='cuda:0')
             if reorder_state is not None:
+                print("-1")
                 if batch_idxs is not None:
+                    print("0")
                     # update beam indices to take into account removed sentences
                     corr = batch_idxs - torch.arange(batch_idxs.numel()).type_as(
                         batch_idxs
@@ -324,19 +372,35 @@ class SequenceGenerator(nn.Module):
                         corr.unsqueeze(-1) * beam_size
                     )
                     original_batch_idxs = original_batch_idxs[batch_idxs]
+                # Here the encoder outs are interacting with something from the end of the function?
                 self.model.reorder_incremental_state(incremental_states, reorder_state)
+                
                 encoder_outs = self.model.reorder_encoder_out(
                     encoder_outs, reorder_state
                 )
             with torch.autograd.profiler.record_function("EnsembleModel: forward_decoder"):
+                # Here we are taking a step forward in the decoder, and it is taking everying
+                # I think this model.foward_decoder method is the place to begin looking
+                #print(f"the tokens before: {tokens}")
+                
+                #print(f"the tokens after: {tokens}")    
                 lprobs, avg_attn_scores = self.model.forward_decoder(
                     tokens[:, : step + 1],
                     encoder_outs,
                     incremental_states,
                     self.temperature,
+                    constrained = True if previous_tokens is not None else False,
+
                 )
 
+                if tokens[:, step : step + 1] == torch.tensor([[4514]], device='cuda:0'):
+                    return [[]], tokens, lprobs, (incremental_states, reorder_state)
+
+                #print(f"what is being passed to the decoder: {tokens[:, : step + 1]}")
+                #raise NotImplementedError()
+
             if self.lm_model is not None:
+                print("1")
                 lm_out = self.lm_model(tokens[:, : step + 1])
                 probs = self.lm_model.get_normalized_probs(
                     lm_out, log_probs=True, sample=None
@@ -349,11 +413,13 @@ class SequenceGenerator(nn.Module):
                 and step < prefix_tokens.size(1)
                 and step < max_len
             ):
+                print("2")
                 lprobs, tokens, scores = self._prefix_tokens(
                     step, lprobs, scores, tokens, prefix_tokens, beam_size
                 )
             elif step < self.min_len:
                 # minimum length constraint (does not apply if using prefix_tokens)
+                print("3")
                 lprobs[:, self.eos] = -math.inf
 
             lprobs[lprobs != lprobs] = torch.tensor(-math.inf).to(lprobs)
@@ -365,6 +431,7 @@ class SequenceGenerator(nn.Module):
             if step >= max_len:
                 lprobs[:, : self.eos] = -math.inf
                 lprobs[:, self.eos + 1 :] = -math.inf
+                print("4")
 
             # Record attention scores, only support avg_attn_scores is a Tensor
             if avg_attn_scores is not None:
@@ -373,6 +440,7 @@ class SequenceGenerator(nn.Module):
                         bsz * beam_size, avg_attn_scores.size(1), max_len + 2
                     ).to(scores)
                 attn[:, :, step + 1].copy_(avg_attn_scores)
+                
 
             scores = scores.type_as(lprobs)
             eos_bbsz_idx = torch.empty(0).to(
@@ -384,11 +452,22 @@ class SequenceGenerator(nn.Module):
 
             if self.should_set_src_lengths:
                 self.search.set_src_lengths(src_lengths)
+                print("7")
 
             if self.repeat_ngram_blocker is not None:
                 lprobs = self.repeat_ngram_blocker(tokens, lprobs, bsz, beam_size, step)
+                print("8")
 
             # Shape: (batch, cand_size)
+            # scores = torch.tensor([[[-0.0237, -0.2651]]], device='cuda:0')
+
+            if step == 10:
+                print(f"the step: {step}")
+                print(f"the lprobs: {lprobs.view(bsz, -1, self.vocab_size)}")
+                print(f"the scores: {scores.view(bsz, beam_size, -1)[:, :, :step]}")
+                print(f"the tokens: {tokens[:, : step + 1]}")
+                print(f"the original batch idxs: {original_batch_idxs}")
+            
             cand_scores, cand_indices, cand_beams = self.search.step(
                 step,
                 lprobs.view(bsz, -1, self.vocab_size),
@@ -396,6 +475,10 @@ class SequenceGenerator(nn.Module):
                 tokens[:, : step + 1],
                 original_batch_idxs,
             )
+            if step == 10:
+                print(f"the candidate indices: {cand_indices}")
+            #if step < 1:
+                #cand_indices = torch.tensor([[736, 934]], device='cuda:0')
 
             # cand_bbsz_idx contains beam indices for the top candidate
             # hypotheses, with a range of values: [0, bsz*beam_size),
@@ -416,6 +499,7 @@ class SequenceGenerator(nn.Module):
 
             finalized_sents: List[int] = []
             if eos_bbsz_idx.numel() > 0:
+                print("eos bbsz idx numel > 0")
                 eos_scores = torch.masked_select(
                     cand_scores[:, :beam_size], mask=eos_mask[:, :beam_size]
                 )
@@ -473,7 +557,9 @@ class SequenceGenerator(nn.Module):
                 cands_to_ignore = cands_to_ignore[batch_idxs]
 
                 scores = scores.view(bsz, -1)[batch_idxs].view(new_bsz * beam_size, -1)
+                
                 tokens = tokens.view(bsz, -1)[batch_idxs].view(new_bsz * beam_size, -1)
+                
                 if attn is not None:
                     attn = attn.view(bsz, -1)[batch_idxs].view(
                         new_bsz * beam_size, attn.size(1), -1
@@ -502,6 +588,11 @@ class SequenceGenerator(nn.Module):
             new_cands_to_ignore, active_hypos = torch.topk(
                 active_mask, k=beam_size, dim=1, largest=False
             )
+            if step == 10:
+                print(f"the active hypo after this single step: {active_hypos}")
+                raise NotImplementedError()
+            #if step < 1:
+                #active_hypos = torch.tensor([[0]], device='cuda:0')
 
             # update cands_to_ignore to ignore any finalized hypos.
             cands_to_ignore = new_cands_to_ignore.ge(cand_size)[:, :beam_size]
@@ -524,10 +615,14 @@ class SequenceGenerator(nn.Module):
             tokens[:, : step + 1] = torch.index_select(
                 tokens[:, : step + 1], dim=0, index=active_bbsz_idx
             )
-            # Select the next token for each of them
+            # Select the next token for each of them 
+            # adding the last output to the tokens
+            # candidates and then the active hypos says which candidate to select
+           
             tokens.view(bsz, beam_size, -1)[:, :, step + 1] = torch.gather(
                 cand_indices, dim=1, index=active_hypos
             )
+            
             if step > 0:
                 scores[:, :step] = torch.index_select(
                     scores[:, :step], dim=0, index=active_bbsz_idx
@@ -548,6 +643,9 @@ class SequenceGenerator(nn.Module):
             # reorder incremental state in decoder
             reorder_state = active_bbsz_idx
 
+            print(f"the current step: {step}")
+
+        ############ line 616 marks the end of the decoder for loop ############
         # sort by score descending
         for sent in range(len(finalized)):
             scores = torch.tensor(
@@ -558,8 +656,9 @@ class SequenceGenerator(nn.Module):
             finalized[sent] = torch.jit.annotate(
                 List[Dict[str, Tensor]], finalized[sent]
             )
-        return finalized
+        
 
+        return finalized, tokens, lprobs, prev_states
     def _prefix_tokens(
         self, step: int, lprobs, scores, tokens, prefix_tokens, beam_size: int
     ):
@@ -738,8 +837,9 @@ class EnsembleModel(nn.Module):
         if all(
             hasattr(m, "decoder") and isinstance(m.decoder, FairseqIncrementalDecoder)
             for m in models
-        ):
+        ):  
             self.has_incremental = True
+            self.has_incremental = False
 
     def forward(self):
         pass
@@ -759,6 +859,7 @@ class EnsembleModel(nn.Module):
             return None
         return [model.encoder.forward_torchscript(net_input) for model in self.models]
 
+    # Here we have the forward_decoder method within the EnsembleModel class
     @torch.jit.export
     def forward_decoder(
         self,
@@ -766,19 +867,26 @@ class EnsembleModel(nn.Module):
         encoder_outs: List[Dict[str, List[Tensor]]],
         incremental_states: List[Dict[str, Dict[str, Optional[Tensor]]]],
         temperature: float = 1.0,
-    ):
+        constrained: bool = False,
+    ):  
         log_probs = []
         avg_attn: Optional[Tensor] = None
         encoder_out: Optional[Dict[str, List[Tensor]]] = None
-        for i, model in enumerate(self.models):
+        for i, model in enumerate(self.models): # Looping over multiple models
             if self.has_encoder():
                 encoder_out = encoder_outs[i]
-            # decode each model
+            # decode each model... (I think each model is just a layer of the decoder)
+            # Yes it has incremental states
             if self.has_incremental_states():
+                # Now we are calling to some other model specifically? 
+                # I think the tokens are a tensor of the previous outputs 
+                # isinstance(model.decoder, FairseqIncrementalDecoder) == True
+                #print(tokens)
                 decoder_out = model.decoder.forward(
                     tokens,
                     encoder_out=encoder_out,
                     incremental_state=incremental_states[i],
+                    constrained=constrained,
                 )
             else:
                 if hasattr(model, "decoder"):
@@ -918,6 +1026,7 @@ class SequenceGeneratorWithAlignment(SequenceGenerator):
                 attn[i], src_tokens[i], tgt_tokens[i], self.pad, self.eos
             )
             finalized[i // beam_size][i % beam_size]["alignment"] = alignment
+    
         return finalized
 
     def _prepare_batch_for_alignment(self, sample, hypothesis):
