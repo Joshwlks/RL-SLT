@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import torch
 import torch.nn as nn
+import numpy as np
 from fairseq import utils
 from fairseq.distributed import fsdp_wrap
 from fairseq.models import FairseqIncrementalDecoder
@@ -215,7 +216,7 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         """
         #print("HELLO WORLD YOU ARE SEEING THIS FROM fairseq/models/transformer/transformer_decoder line 215")
         #raise NotImplementedError()
-        x, extra = self.extract_features(
+        x, extra, observation = self.extract_features(
             prev_output_tokens,
             encoder_out=encoder_out,
             incremental_state=incremental_state,
@@ -227,7 +228,7 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
 
         if not features_only:
             x = self.output_layer(x)
-        return x, extra
+        return observation, (x, extra)
 
     def extract_features(
         self,
@@ -311,7 +312,7 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
                 positions = positions[:, -1:]
 
         # embed tokens and positions
-        print(f"this is the x that the layers are working on: {prev_output_tokens}")
+        #print(f"this is the x that the layers are working on: {prev_output_tokens}")
         x = self.embed_scale * self.embed_tokens(prev_output_tokens) # previous outputs are x
         if self.quant_noise is not None:
             x = self.quant_noise(x)
@@ -338,29 +339,29 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         # decoder layers
         attn: Optional[Tensor] = None
         inner_states: List[Optional[Tensor]] = [x]
-        print(f"the number of layers: {len(self.layers)}")
+        #print(f"the number of layers: {len(self.layers)}")
        
         for idx, layer in enumerate(self.layers):
             if incremental_state is None and not full_context_alignment:
                 self_attn_mask = self.buffered_future_mask(x)
-                if prev_output_tokens == torch.tensor([[4514]], device='cuda:0'):
-                    print(f"Hello you're incremental state is None and not full context alignment is True at idx {idx}")
+                #if prev_output_tokens == torch.tensor([[4514]], device='cuda:0'):
+                    #print(f"Hello you're incremental state is None and not full context alignment is True at idx {idx}")
             else:
                 self_attn_mask = None
             
-            if prev_output_tokens == torch.tensor([[4514]], device='cuda:0') and 10==3:
-                print(f"the value of x before decoding: {x}")
-                print(f"the value of enc: {enc}")
-                print(f"the value of padding mask: {padding_mask}")
-                print(f"the incremental state: {incremental_state}")
-                print(f"the self attn mask: {self_attn_mask}")
-                print(f"the self attn padding mask: {self_attn_padding_mask}")
-                print(f"need attn: {idx == alignment_layer}")
-                print(f"need head weights: {idx == alignment_layer}")
+            # if prev_output_tokens == torch.tensor([[4514]], device='cuda:0') and 10==3:
+            #     print(f"the value of x before decoding: {x}")
+            #     print(f"the value of enc: {enc}")
+            #     print(f"the value of padding mask: {padding_mask}")
+            #     print(f"the incremental state: {incremental_state}")
+            #     print(f"the self attn mask: {self_attn_mask}")
+            #     print(f"the self attn padding mask: {self_attn_padding_mask}")
+            #     print(f"need attn: {idx == alignment_layer}")
+            #     print(f"need head weights: {idx == alignment_layer}")
                 
-                raise NotImplementedError()
+            #     raise NotImplementedError()
             #print(f"the incremental state: {incremental_state}")
-            x, layer_attn, _ = layer(
+            x, layer_attn, _ , self_attn_vector, cross_attn_vector = layer(
                 x,
                 enc,
                 padding_mask,
@@ -374,8 +375,8 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
             inner_states.append(x)
             if layer_attn is not None and idx == alignment_layer:
                 attn = layer_attn.float().to(x)
-                if prev_output_tokens == torch.tensor([[4514]], device='cuda:0'):
-                    print(f"Hello layer attn is not None and idx equals alignment layer at idx {idx}")
+                #if prev_output_tokens == torch.tensor([[4514]], device='cuda:0'):
+                    #print(f"Hello layer attn is not None and idx equals alignment layer at idx {idx}")
             
 
 
@@ -392,11 +393,20 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         # T x B x C -> B x T x C
         x = x.transpose(0, 1)
 
+        # get the first two thirds of the next RL environment observation
+        self_attn_vector=self_attn_vector.transpose(0,1)
+        self_attn_vector=self_attn_vector[:,-1:,:].squeeze().cpu().detach().numpy()
+        cross_attn_vector=cross_attn_vector.transpose(0,1)
+        cross_attn_vector=cross_attn_vector[:,-1:,:].squeeze().cpu().detach().numpy()
+        embedded_output=x.clone()[:,-1:,:].squeeze().cpu().detach().numpy()
+        observation=np.concatenate((self_attn_vector, cross_attn_vector, embedded_output))
+
+        
         if self.project_out_dim is not None:
             x = self.project_out_dim(x)
-
-        return x, {"attn": [attn], "inner_states": inner_states}
-
+       
+        return x, {"attn": [attn], "inner_states": inner_states}, observation
+   
     def output_layer(self, features):
         """Project features to the vocabulary size."""
         if self.adaptive_softmax is None:

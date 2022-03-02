@@ -8,8 +8,11 @@ import os
 import sys
 import math
 
+import numpy as np
+
 import torch
 from fairseq import checkpoint_utils, options, tasks, utils
+from fairseq.data import data_utils
 
 import warnings
 warnings.filterwarnings('ignore', '.*floor_divide is deprecated.*',)
@@ -83,7 +86,7 @@ class Generator():
             arg_overrides=eval(self.args.model_overrides),
             task=self.task,
         )
-
+   
         # making the dictionary objects
         self.src_dict = self.task.source_dictionary
         self.tgt_dict = self.task.target_dictionary
@@ -104,7 +107,7 @@ class Generator():
             from fairseq.gpt2_bpe.gpt2_encoding import get_encoder
             self.decoder = get_encoder(
                 'fairseq/gpt2_bpe/encoder.json',
-                'fairseq/gpt2_bp    e/vocab.bpe',
+                'fairseq/gpt2_bpe/vocab.bpe',
             )
             self.encode_fn = lambda x: ' '.join(map(str, self.decoder.encode(x)))
         else:
@@ -119,7 +122,7 @@ class Generator():
         )
 
     # for an input or for a file... I am just using the input feature atm.
-    def generate(self, input, previous_tokens=None ,string_input=True, prev_states=None):
+    def generate(self, input, previous_tokens=None ,string_input=True, rl=True):
         start_id = 0
         if string_input:
             inputs = [input] 
@@ -139,21 +142,37 @@ class Generator():
                 }
                 # Here the translations take place
                 # I will also want to pass the previous output through
-                translations, prev_tokens, lprobs, prev_states = self.task.inference_step(self.generator, self.models, sample, previous_tokens=previous_tokens, prev_states=prev_states)
+                translations, prev_tokens, lprobs, observation = self.task.inference_step(self.generator, self.models, sample, previous_tokens=previous_tokens)
+                if rl:
+                    return translations, prev_tokens, lprobs, observation
+                    
                 for i, (id, hypos) in enumerate(zip(batch.ids.tolist(), translations)):
                     src_tokens_i = utils.strip_pad(src_tokens[i], self.tgt_dict.pad())
                     results.append((start_id + id, src_tokens_i, hypos))
                 
-                if not translations[0]:
-                    return prev_tokens, lprobs, prev_states
-            
-            
-            
             for id, src_tokens, hypos in sorted(results, key=lambda x: x[0]):
                     if self.src_dict is not None:
                         src_str = self.src_dict.string(src_tokens, self.args.remove_bpe)
             
+            if hypos==[]:
+                #print(f"the prev tokens indexed: {(prev_tokens==1).nonzero(as_tuple=True)[1][0]}")
+                _, hypo_str, _ = utils.post_process_prediction(
+                    hypo_tokens=prev_tokens[:,:(prev_tokens==1).nonzero(as_tuple=True)[1][0]].int().cpu(),
+                    src_str=src_str,
+                    alignment=None, 
+                    align_dict=self.align_dict, 
+                    tgt_dict=self.tgt_dict,
+                    remove_bpe=self.args.remove_bpe,
+                )
+                return hypo_str, prev_tokens, lprobs, observation
+
             for hypo in hypos[:min(len(hypos), self.args.nbest)]:
+                if hypo==None:
+                    return None, prev_tokens, lprobs, observation
+
+                # print(f"src_str: {src_str}")
+                # print(f"alignment: {hypo['alignment'].int().cpu()}")
+                # raise NotImplementedError()
                 hypo_tokens, hypo_str, alignment = utils.post_process_prediction(
                     hypo_tokens=hypo['tokens'].int().cpu(),
                     src_str=src_str,
@@ -166,11 +185,7 @@ class Generator():
                 if self.decoder is not None:
                     hypo_str = self.decoder.decode(map(int, hypo_str.strip().split()))
 
-                print(f"the test on hyp str: {hypo_str==None}")
-                print(hypo_str)
-
-                
-                return hypo_str, prev_tokens, lprobs, prev_states
+                return hypo_str, prev_tokens, attn, decoder_state
 
         ## File input for the NMT... not going to need to use this I do not think
         else:
@@ -216,18 +231,92 @@ class Generator():
                 # update running id_ counter
                 start_id += len(inputs)
                        
-
         
 
 if __name__ == '__main__':
     gen = Generator("/home/bhaddow/experiments/e2e-slt-noise/data/baseline-mt/en-fr/data-bin", "/home/bhaddow/experiments/e2e-slt-noise/expts/baseline-mt/en-fr/checkpoints/checkpoint_best.pt")
+    #gen = Generator("/home/jwilkins/RL-SLT/fairseq/examples/wmt19/en-de/data-bin", "/home/jwilkins/RL-SLT/fairseq/examples/wmt19/en-de/wmt19.en-de.ffn8192.pt")
 
     #print(gen.generate(input='fairseq/RL/source.txt'))  # was slightly wrong to get the NMT to work on a document basis I think...
     #tokens = gen.generate("▁Hello ▁my ▁friends ▁good ▁morning .")[1]
     lprob1, lprob2 = (0,0)
-    #tokens, lprob1, prev_states1 = gen.generate("▁Hello")
-    #sent, tokens, lprob1, prev_states = gen.generate("▁Hello ▁my", previous_tokens=tokens, prev_states=prev_states)
-    tokens, a_lprob, prev_states2 = gen.generate("▁Hello ▁my")
+
+    sent1, tokens, lprob1, observation = gen.generate("▁Please ▁all ▁make")
+    
+    #print(f"the sent: {sent1}")
+    # print(f"the attn tensor: {attn.size()}")
+    # print(f"the decoder state: {decoder_state}")
+    # #print(f"the max lprob is {torch.max(lprob1)} at index {torch.argmax(lprob1)}")
+    # #print(f"the tokens: {tokens}")
+    sent2, tokens, lprob2, observation = gen.generate("▁Please ▁all ▁make ▁yourselves ▁comfortable", previous_tokens=tokens)
+    # print(f"the sent: {sent2}")
+    sent3, tokens, lprob2, observation = gen.generate("▁Please ▁all ▁make ▁yourselves ▁comfortable", previous_tokens=tokens)
+    # print(f"the sent: {sent3}")
+    sent4, tokens, lprob2, observation = gen.generate("▁Please ▁all ▁make ▁yourselves ▁comfortable", previous_tokens=tokens)
+    # print(f"the sent: {sent4}")
+    # print(f"the attn tensor: {attn.size()}")
+    # print(f"the decoder state: {decoder_state}")
+    index=torch.argmax(lprob2).item()
+    print(f"the index: {index}")
+    #pred_tgt.append(self.dict['tgt'][index])
+    print(attn.shape)
+    print(decoder_state.shape)
+    print(obs.shape)
+    print(obs)
+    
+    
+
+
+    # #print(f"the max lprob is {torch.max(lprob2)} at index {torch.argmax(lprob2)}")
+    # #print(f"the tokens: {tokens}")
+    # sent3, tokens, lprob3 = gen.generate("▁Please ▁all ▁make, ▁yourselves ▁comfortable", previous_tokens=tokens)
+    # #print(f"the max lprob is {torch.max(lprob3)} at index {torch.argmax(lprob3)}")
+    # #print(f"the tokens: {tokens}")
+    # sent4, tokens, lprob4 = gen.generate("▁Please ▁all ▁make, ▁yourselves ▁comfortable", previous_tokens=tokens)
+    # #print(f"the max lprob is {torch.max(lprob4)} at index {torch.argmax(lprob4)}")
+    # #print(f"the tokens: {tokens}")
+    # sent5, tokens, lprob5 = gen.generate("▁Please ▁all ▁make, ▁yourselves ▁comfortable", previous_tokens=tokens)
+    # #print(f"the max lprob is {torch.max(lprob5)} at index {torch.argmax(lprob5)}")
+    # #print(f"the tokens: {tokens}")
+    # sent6, tokens, lprob5 = gen.generate("▁Please ▁all ▁make, ▁yourselves ▁comfortable", previous_tokens=tokens)
+    # #print(f"the max lprob is {torch.max(lprob5)} at index {torch.argmax(lprob5)}")
+    # sent7, tokens, lprob5 = gen.generate("▁Please ▁all ▁make, ▁yourselves ▁comfortable", previous_tokens=tokens)
+    # sent8, tokens, lprob5 = gen.generate("▁Please ▁all ▁make, ▁yourselves ▁comfortable", previous_tokens=tokens)
+    # sent9, tokens, lprob5 = gen.generate("▁Please ▁all ▁make, ▁yourselves ▁comfortable", previous_tokens=tokens)
+    # print(sent1 + "\n", sent2 + '\n', sent3 + '\n', sent4 + '\n', sent5 + '\n', sent6 + '\n' + sent7 + '\n' + sent8 + '\n' + sent9)
+    # print(sent1.split(" ")[-1])
+    # print(sent2.split(" ")[-1])
+    # print(sent3.split(" ")[-1])
+    # print(sent4.split(" ")[-1])
+    # print(sent5.split(" ")[-1])
+    # print(sent6.split(" ")[-1])
+
+
+    #sent_ful, tokens, lprob5 = gen.generate("▁Please ▁all ▁make, ▁yourselves ▁comfortable")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    """
+
+    Namespace(all_gather_list_size=16384, amp=False, amp_batch_retries=2, amp_init_scale=128, amp_scale_window=None, azureml_logging=False, batch_size=None, batch_size_valid=None, beam=1, best_checkpoint_metric='loss', bf16=False, bpe=None, broadcast_buffers=False, bucket_cap_mb=25, buffer_size=0, checkpoint_shard_count=1, checkpoint_suffix='', combine_valid_subsets=None, constraints=None, cpu=False, cpu_offload=False, criterion='cross_entropy', curriculum=0, data='/home/jwilkins/RL-SLT/fairseq/examples/wmt19/en-de/data-bin', data_buffer_size=10, dataset_impl='lazy', ddp_backend='pytorch_ddp', ddp_comm_hook='none', decoding_format=None, device_id=0, disable_validation=False, distributed_backend='nccl', distributed_init_method=None, distributed_no_spawn=False, distributed_num_procs=4, distributed_port=-1, distributed_rank=0, distributed_world_size=1, diverse_beam_groups=-1, diverse_beam_strength=0.5, diversity_rate=-1.0, empty_cache_freq=0, eos=2, eval_bleu=False, eval_bleu_args='{}', eval_bleu_detok='space', eval_bleu_detok_args='{}', eval_bleu_print_samples=False, eval_bleu_remove_bpe=None, eval_tokenized_bleu=False, fast_stat_sync=False, find_unused_parameters=False, finetune_from_model=None, fix_batches_to_gpus=False, fixed_validation_seed=None, force_anneal=None, fp16=False, fp16_init_scale=128, fp16_no_flatten_grads=False, fp16_scale_tolerance=0.0, fp16_scale_window=None, fp32_reduce_scatter=False, gen_subset='test', gradient_as_bucket_view=False, heartbeat_timeout=-1, ignore_unused_valid_subsets=False, input='-', iter_decode_eos_penalty=0.0, iter_decode_force_max_iter=False, iter_decode_max_iter=10, iter_decode_with_beam=1, iter_decode_with_external_reranker=False, keep_best_checkpoints=-1, keep_interval_updates=-1, keep_interval_updates_pattern=-1, keep_last_epochs=-1, left_pad_source=True, left_pad_target=False, lenpen=1, lm_path=None, lm_weight=0.0, load_alignments=False, load_checkpoint_on_all_dp_ranks=False, localsgd_frequency=3, log_file=None, log_format=None, log_interval=100, lr_scheduler='fixed', lr_shrink=0.1, match_source_len=False, max_len_a=0, max_len_b=200, max_source_positions=1024, max_target_positions=1024, max_tokens=None, max_tokens_valid=None, max_valid_steps=None, maximize_best_checkpoint_metric=False, memory_efficient_bf16=False, memory_efficient_fp16=False, min_len=1, min_loss_scale=0.0001, model_overrides='{}', model_parallel_size=1, nbest=1, no_beamable_mm=False, no_early_stop=False, no_epoch_checkpoints=False, no_last_checkpoints=False, no_progress_bar=False, no_repeat_ngram_size=0, no_reshard_after_forward=False, no_save=False, no_save_optimizer_state=False, no_seed_provided=False, nprocs_per_node=4, num_batch_buckets=0, num_shards=1, num_wokers=5, num_workers=1, on_cpu_convert_precision=False, optimizer=None, optimizer_overrides='{}', pad=1, path='/home/jwilkins/RL-SLT/fairseq/examples/wmt19/en-de/wmt19.en-de.ffn8192.pt', patience=-1, pipeline_balance=None, pipeline_checkpoint='never', pipeline_chunks=0, pipeline_decoder_balance=None, pipeline_decoder_devices=None, pipeline_devices=None, pipeline_encoder_balance=None, pipeline_encoder_devices=None, pipeline_model_parallel=False, plasma_path='/tmp/plasma', post_process=None, prefix_size=0, print_alignment=None, print_step=False, profile=False, quantization_config_path=None, quiet=False, remove_bpe='sentencepiece', replace_unk=None, required_batch_size_multiple=8, required_seq_len_multiple=1, reset_dataloader=False, reset_logging=False, reset_lr_scheduler=False, reset_meters=False, reset_optimizer=False, restore_file='checkpoint_last.pt', results_path=None, retain_dropout=False, retain_dropout_modules=None, retain_iter_history=False, sacrebleu=False, sampling=False, sampling_topk=-1, sampling_topp=-1.0, save_dir='checkpoints', save_interval=1, save_interval_updates=0, score_reference=False, scoring='bleu', seed=1, shard_id=0, simul_type=None, skip_invalid_size_inputs_valid_test=False, slowmo_algorithm='LocalSGD', slowmo_momentum=None, source_lang=None, suppress_crashes=False, target_lang=None, task='translation', temperature=1.0, tensorboard_logdir=None, threshold_loss_scale=None, tokenizer=None, tpu=False, train_subset='train', truncate_source=False, unk=3, unkpen=0, unnormalized=False, upsample_primary=-1, use_plasma_view=False, use_sharded_state=False, user_dir=None, valid_subset='valid', validate_after_updates=0, validate_interval=1, validate_interval_updates=0, wandb_project=None, warmup_updates=0, write_checkpoints_asynchronously=False, zero_sharding='none'
+
+    """
+    #tokens, a_lprob, prev_states2 = gen.generate("▁Hello ▁my")
+    #print(gen.generate("▁Hello ▁my ▁friends"))
+
+
+
    
 
     ### With this I discovered that the incremental states are not equal because the encoder inputs are different despite the 

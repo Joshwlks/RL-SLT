@@ -237,7 +237,7 @@ def post_process_prediction(
     remove_bpe=None,
     extra_symbols_to_ignore=None,
 ):
-    print(f"the hypo tokens before : {hypo_tokens}")
+    #print(f"the hypo tokens before : {hypo_tokens}")
     hypo_str = tgt_dict.string(
         hypo_tokens, remove_bpe, extra_symbols_to_ignore=extra_symbols_to_ignore
     )
@@ -249,8 +249,8 @@ def post_process_prediction(
         # Convert back to tokens for evaluating with unk replacement or without BPE
         # Note that the dictionary can be modified inside the method.
         hypo_tokens = tgt_dict.encode_line(hypo_str, add_if_not_exist=True)
-    print(f"the hypo tokens after : {hypo_tokens}")
-    print(f"the hypo str: {hypo_str}")
+    # print(f"the hypo tokens after : {hypo_tokens}")
+    # print(f"the hypo str: {hypo_str}")
     return hypo_tokens, hypo_str, alignment
 
 

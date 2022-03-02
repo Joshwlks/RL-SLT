@@ -296,13 +296,21 @@ class TranslationTask(FairseqTask):
         paths = utils.split_paths(cfg.data)
         assert len(paths) > 0
         # find language pair automatically
+        # print(f"src and tgt langs: {data_utils.infer_language_pair(paths[0])}")
+        # raise NotImplementedError()
+        #cfg.source_lang, cfg.target_lang = data_utils.infer_language_pair(paths[0])
+        #print(cfg.source_lang, cfg.target_lang)
         if cfg.source_lang is None or cfg.target_lang is None:
+            #print(cfg.source_lang, cfg.target_lang)
+            #print("theyre none!")
             cfg.source_lang, cfg.target_lang = data_utils.infer_language_pair(paths[0])
+            #print(cfg.source_lang, cfg.target_lang)
+            #raise NotImplementedError()
         if cfg.source_lang is None or cfg.target_lang is None:
             raise Exception(
                 "Could not infer language pair, please provide it explicitly"
             )
-
+        #raise NotImplementedError()
         # load dictionaries
         src_dict = cls.load_dictionary(
             os.path.join(paths[0], "dict.{}.txt".format(cfg.source_lang))

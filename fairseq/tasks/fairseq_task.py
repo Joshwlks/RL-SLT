@@ -336,7 +336,7 @@ class FairseqTask(object):
 
         return criterions.build_criterion(cfg, self)
 
-    # Here we build the generator that is used for the transltions (including the interactive translations!)
+    # Here we build the generator that is used for the translations (including the interactive translations!)
     def build_generator(
         self, models, args, seq_gen_cls=None, extra_gen_cls_kwargs=None, prefix_allowed_tokens_fn=None,
     ):
@@ -516,11 +516,11 @@ class FairseqTask(object):
     # This gets called in line ~240 in the interactive file and passes onto the _generate fnc in the sequence_generator file
     # We will need this to take the previous output, and also output the previous one I suppose
     def inference_step(
-        self, generator, models, sample, prefix_tokens=None, constraints=None, previous_tokens=None, prev_states=None
+        self, generator, models, sample, prefix_tokens=None, constraints=None, previous_tokens=None,
     ):
         with torch.no_grad():
             return generator.generate(
-                models, sample, prefix_tokens=prefix_tokens, constraints=constraints, previous_tokens=previous_tokens, prev_states=prev_states
+                models, sample, prefix_tokens=prefix_tokens, constraints=constraints, previous_tokens=previous_tokens,
             )
 
     def begin_epoch(self, epoch, model):

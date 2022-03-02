@@ -315,8 +315,6 @@ class TransformerDecoderLayerBase(nn.Module):
         Returns:
             encoded output of shape `(seq_len, batch, embed_dim)`
         """
-        #print(f"the input being passed into the decoder layer: {x}")
-        #raise NotImplementedError()
         if need_head_weights:
             need_attn = True
 
@@ -367,6 +365,7 @@ class TransformerDecoderLayerBase(nn.Module):
             need_weights=False,
             attn_mask=self_attn_mask,
         )
+        self_attn_vector = x
         x = self.dropout_module(x)
         x = self.residual_connection(x, residual)
         if not self.normalize_before:
@@ -397,6 +396,9 @@ class TransformerDecoderLayerBase(nn.Module):
                 need_weights=need_attn or (not self.training and self.need_attn),
                 need_head_weights=need_head_weights,
             )
+
+            cross_attn_vector = x
+
             x = self.dropout_module(x)
             x = self.residual_connection(x, residual)
             if not self.normalize_before:
@@ -413,7 +415,8 @@ class TransformerDecoderLayerBase(nn.Module):
         x = self.residual_connection(x, residual)
         if not self.normalize_before:
             x = self.final_layer_norm(x)
-        if self.onnx_trace and incremental_state is not None:
+        # Following if statement is not entered by my code
+        if self.onnx_trace and incremental_state is not None:    
             saved_state = self.self_attn._get_input_buffer(incremental_state)
             assert saved_state is not None
             if self_attn_padding_mask is not None:
@@ -425,7 +428,7 @@ class TransformerDecoderLayerBase(nn.Module):
             else:
                 self_attn_state = [saved_state["prev_key"], saved_state["prev_value"]]
             return x, attn, self_attn_state
-        return x, attn, None
+        return x, attn, None, self_attn_vector, cross_attn_vector
 
     def make_generation_fast_(self, need_attn: bool = False, **kwargs):
         self.need_attn = need_attn
