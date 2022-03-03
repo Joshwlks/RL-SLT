@@ -53,7 +53,7 @@ class SNmtEnv(gym.Env):
 
         ## define spaces
         self.action_space=spaces.Discrete(2)
-        self.observation_space=spaces.Discrete(2)
+        self.observation_space=spaces.Box(np.array([-np.inf]*2),np.array([np.inf]*2), dtype=np.int64)
         #self.observation_space=spaces.Box(np.array([-np.inf]*self.obs_dim),np.array([np.inf]*self.obs_dim), dtype=np.float64)
 
         # sentence piece encodeing and decoding models
@@ -102,7 +102,7 @@ class SNmtEnv(gym.Env):
         self.alpha=-0.5
         self.beta=-0.5
         self.d_star=0.8
-        self.c_star=3
+        self.c_star=2
         self.rewards=[]
         self.latencys=[]
         self.bleus=[]
@@ -143,21 +143,22 @@ class SNmtEnv(gym.Env):
         #### Calculate rewards ###
         # change in bleu
         current_bleu=sentence_bleu(self.ref,self.sp_decoder(self.curr_tgt).split() , smoothing_function=SmoothingFunction().method5)[self.done]
-        change_in_bleu=current_bleu - self.prev_bleu
+        quality_reward=current_bleu - self.prev_bleu if not self.done else current_bleu
         self.prev_bleu=current_bleu
-        self.bleus.append(change_in_bleu)
+        self.bleus.append(quality_reward)
 
         # latency
         if self.done and self.curr_tgt_word==0:
             print("Why is it not resetting ????")
             raise NotImplementedError()
+        self.c_star=2 if not self.finished_reading else 0
         self.cw+=1 if action==0 else -self.cw
         d_t=0 if not self.done else sum(self.d)/((self.curr_word+1)*self.curr_tgt_word)
         d_t=d_t - self.d_star if d_t>self.d_star else 0    
         latency_reward=self.alpha*(np.sign(self.cw - self.c_star) + 1) + self.beta*(d_t)
         self.latencys.append(latency_reward)
         # combine latency and quality
-        reward=change_in_bleu + latency_reward
+        reward=quality_reward + latency_reward
         self.rewards.append(reward)
         #### Get new observation ####
         self.prev_tokens_predicted=self.prev_tokens_actual
@@ -169,7 +170,7 @@ class SNmtEnv(gym.Env):
             _, self.prev_tokens_predicted, lprobs, observation=self.model(to_translate, self.prev_tokens_predicted)
             index=torch.argmax(lprobs).item()
             self.pred_tgt.append(self.dict['tgt'][index])
-
+       
         # handle Sentence Piecing on output
         rest_of_word, temp_obs=self.postprocess(to_translate)
         while rest_of_word is not None:
