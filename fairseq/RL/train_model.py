@@ -8,7 +8,7 @@ from typing import Callable
 import gym 
 from gym.wrappers import TimeLimit
 
-import stable_baselines3d
+import stable_baselines3
 from stable_baselines3 import A2C, PPO
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
