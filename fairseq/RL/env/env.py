@@ -53,8 +53,8 @@ class SNmtEnv(gym.Env):
 
         ## define spaces
         self.action_space=spaces.Discrete(2)
-        self.observation_space=spaces.Box(np.array([-np.inf]*2),np.array([np.inf]*2), dtype=np.int64)
-        #self.observation_space=spaces.Box(np.array([-np.inf]*self.obs_dim),np.array([np.inf]*self.obs_dim), dtype=np.float64)
+        #self.observation_space=spaces.Box(np.array([-np.inf]*2),np.array([np.inf]*2), dtype=np.int64)
+        self.observation_space=spaces.Box(np.array([-np.inf]*self.obs_dim),np.array([np.inf]*self.obs_dim), dtype=np.float64)
 
         # sentence piece encodeing and decoding models
         self.sp_encoder=spm.SentencePieceProcessor(model_file='/home/bhaddow/experiments/e2e-slt-noise/data/baseline-mt/en-fr/spm_unigram8000_en.model').encode
@@ -190,8 +190,8 @@ class SNmtEnv(gym.Env):
         token_embed=token_embed[:,-1:,:].squeeze().cpu().detach().numpy()
 
         # form next observation via concatenation of attn, decoder state and token embedding
-        #observation=np.concatenate((observation, token_embed), axis=0)
-        observation=np.array([self.curr_word+1,self.curr_tgt_word])
+        observation=np.concatenate((observation, token_embed), axis=0)
+        #observation=np.array([self.curr_word+1,self.curr_tgt_word])
 
         if self.done: print(f"the total reward for this episode was: {sum(self.rewards)}")
         return observation, reward, self.done, {}
@@ -247,8 +247,8 @@ class SNmtEnv(gym.Env):
         token_embed=token_embed[:,-1:,:].squeeze().cpu().detach().numpy()
 
         # form next observation via concatenation of attn, decoder state and token embedding
-        #observation=np.concatenate((observation, token_embed), axis=0)
-        observation=np.array([self.curr_word+1,self.curr_tgt_word])
+        observation=np.concatenate((observation, token_embed), axis=0)
+        #observation=np.array([self.curr_word+1,self.curr_tgt_word])
         return observation
 
 
